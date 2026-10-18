@@ -1,11 +1,11 @@
 name: Unity WebGL - Four Froggies (PR build check)
 
-# ffw: compile-check Unity PRs into unity-src before merging. Same Unity setup, license and build as
-# unity-four-froggies.yml, but it never publishes to gh-pages and never commits to unity-src: the build log is
+# ffw: compile-check Unity PRs into main before merging. Same Unity setup, license and build as
+# unity-four-froggies.yml, but it never publishes to gh-pages and never commits to main: the build log is
 # uploaded as an artifact instead. Secrets are available because our PRs come from branches of this repo.
 on:
   pull_request:
-    branches: [unity-src]
+    branches: [main]
     paths:
       - 'unity/four-froggies/**'
       - '.github/workflows/unity-four-froggies*.yml'

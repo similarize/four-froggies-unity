@@ -5,9 +5,9 @@ name: Unity Android APK - Four Froggies
 #  - shares the WebGL workflow's concurrency group with cancel-in-progress off: it queues behind a running WebGL build and
 #    never runs alongside it (dispatch it only when no WebGL run is queued);
 #  - started by hand (workflow_dispatch) or by a push that changes only this file / unity/logs/ff-android-request.txt.
-# Signing: repo secrets FF_ANDROID_KEYSTORE_B64 (+ FF_ANDROID_KEYSTORE_PASS, FF_ANDROID_KEY_ALIAS) when set; otherwise a
-# self-generated sideload keystore kept in the repo at unity/four-froggies/android/ff-sideload.keystore (made on the first
-# run and committed with the build log), so later APKs install as updates over earlier ones.
+# Signing: repo secrets FF_ANDROID_KEYSTORE_B64 + FF_ANDROID_KEYSTORE_PASS (+ optional FF_ANDROID_KEY_ALIAS, default
+# fourfroggies) hold the ONE existing Four Froggies sideload key, so later APKs install as updates over earlier ones.
+# If they are missing the build FAILS; it never generates or commits a new key.
 on:
   workflow_dispatch:
     inputs:
@@ -16,7 +16,7 @@ on:
         required: false
         default: 'ff-android-ffu35'
   push:
-    branches: [unity-src]
+    branches: [main]
     paths:
       - '.github/workflows/unity-four-froggies-android.yml'
       - 'unity/logs/ff-android-request.txt'
@@ -38,10 +38,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 170
     steps:
-      - name: Checkout unity-src
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: unity-src
+          ref: main
           path: src
 
       - name: Prepare log dir
@@ -143,24 +143,15 @@ jobs:
           { echo "android player: $AP"; ls "$AP" 2>&1; ls "$AP/SDK/build-tools" "$AP/SDK/platforms" "$AP/NDK" 2>&1 | head -20; } | tee -a "$LOG_DIR/status.txt"
           KT="$AP/OpenJDK/bin/keytool"; [ -x "$KT" ] || KT=$(command -v keytool)
           mkdir -p "$PROJECT_DIR/android"
-          if [ -n "$KS_B64" ]; then
-            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/ff.keystore"
-            echo "FF_KEYSTORE=$RUNNER_TEMP/ff.keystore" >> "$GITHUB_ENV"
-            echo "FF_KEYSTORE_PASS=$KS_PASS" >> "$GITHUB_ENV"
-            echo "FF_KEY_ALIAS=${KS_ALIAS:-fourfroggies}" >> "$GITHUB_ENV"
-            echo "signing: repo secret keystore" | tee -a "$LOG_DIR/status.txt"
-          else
-            K="$GITHUB_WORKSPACE/$PROJECT_DIR/android/ff-sideload.keystore"
-            if [ ! -f "$K" ]; then
-              "$KT" -genkeypair -v -keystore "$K" -storetype JKS -alias fourfroggies -keyalg RSA -keysize 2048 -validity 10000 \
-                -storepass fourfroggies -keypass fourfroggies -dname "CN=Four Froggies, O=Similarize, C=US" 2>&1 | tail -n 3 | tee -a "$LOG_DIR/status.txt"
-              echo "NEW_KEYSTORE=1" >> "$GITHUB_ENV"
-            fi
-            echo "FF_KEYSTORE=$K" >> "$GITHUB_ENV"
-            echo "FF_KEYSTORE_PASS=fourfroggies" >> "$GITHUB_ENV"
-            echo "FF_KEY_ALIAS=fourfroggies" >> "$GITHUB_ENV"
-            echo "signing: repo sideload keystore (android/ff-sideload.keystore)" | tee -a "$LOG_DIR/status.txt"
+          if [ -z "$KS_B64" ] || [ -z "$KS_PASS" ]; then
+            echo "::error::FF_ANDROID_KEYSTORE_B64 and FF_ANDROID_KEYSTORE_PASS secrets are required (the existing Four Froggies sideload key). Refusing to build or create a new key." | tee -a "$LOG_DIR/status.txt"
+            exit 1
           fi
+          ( umask 077; printf '%s' "$KS_B64" | base64 -d > "$RUNNER_TEMP/ff.keystore" )
+          echo "FF_KEYSTORE=$RUNNER_TEMP/ff.keystore" >> "$GITHUB_ENV"
+          echo "FF_KEYSTORE_PASS=$KS_PASS" >> "$GITHUB_ENV"
+          echo "FF_KEY_ALIAS=${KS_ALIAS:-fourfroggies}" >> "$GITHUB_ENV"
+          echo "signing: repo secret keystore" | tee -a "$LOG_DIR/status.txt"
 
       - name: Activate Unity license
         id: activate
@@ -211,7 +202,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          NOTES="Four Froggies for Android ($TAG, unity-src ${GITHUB_SHA::7}) - sideload APK, 64-bit ARM (Pixel 9 and other recent phones). On the phone: open this page, tap the .apk, allow installs from this source when Android asks (Settings > Apps > Special app access > Install unknown apps), then Install. Touch controls, or pair a Bluetooth Xbox controller (one controller = one froggy). Built by run ${{ github.run_id }}."
+          NOTES="Four Froggies for Android ($TAG, main ${GITHUB_SHA::7}) - sideload APK, 64-bit ARM (Pixel 9 and other recent phones). On the phone: open this page, tap the .apk, allow installs from this source when Android asks (Settings > Apps > Special app access > Install unknown apps), then Install. Touch controls, or pair a Bluetooth Xbox controller (one controller = one froggy). Built by run ${{ github.run_id }}."
           if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
             gh release upload "$TAG" "$APK" --clobber --repo "${{ github.repository }}"
           else
@@ -220,7 +211,7 @@ jobs:
           URL=$(gh release view "$TAG" --repo "${{ github.repository }}" --json url -q .url)
           echo "RELEASE_URL: $URL" | tee -a "$LOG_DIR/status.txt"
 
-      - name: Commit build log (and a new sideload keystore) to unity-src
+      - name: Commit build log to main
         if: always()
         env:
           UE: ${{ secrets.UNITY_EMAIL }}
@@ -246,11 +237,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
           git add "$L"
-          if [ "${NEW_KEYSTORE:-0}" = "1" ] && [ "${{ steps.build.outcome }}" = "success" ]; then git add unity/four-froggies/android/ff-sideload.keystore; fi
           git commit -m "Four Froggies Android build log for run ${{ github.run_id }} [skip ci]" || exit 0
           for i in 1 2 3 4 5; do
-            git push origin HEAD:unity-src && exit 0
+            git push origin HEAD:main && exit 0
             sleep $((i*2))
-            git pull --rebase origin unity-src || true
+            git pull --rebase origin main || true
           done
           exit 0

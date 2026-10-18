@@ -3,7 +3,7 @@ name: Unity WebGL - Four Froggies
 on:
   workflow_dispatch:
   push:
-    branches: [unity-src]
+    branches: [main]
     paths:
       - 'unity/four-froggies/**'
       - '.github/workflows/unity-four-froggies.yml'
@@ -24,10 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
-      - name: Checkout unity-src
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: unity-src
+          ref: main
           path: src
 
       - name: Prepare log dir
@@ -130,15 +130,20 @@ jobs:
         id: publish
         if: success()
         env:
-          GH_TOKEN: ${{ github.token }}
+          SITE_DEPLOY_KEY: ${{ secrets.SITE_DEPLOY_KEY }}
         run: |
           set -e
+          if [ -z "$SITE_DEPLOY_KEY" ]; then echo "::error::SITE_DEPLOY_KEY secret is missing; cannot publish to similarize/SimilarizeWebsite" | tee -a "$LOG_DIR/status.txt"; exit 1; fi
+          install -d -m 700 "$HOME/.ssh"
+          ( umask 077; printf '%s\n' "$SITE_DEPLOY_KEY" > "$HOME/.ssh/site_deploy" )
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > "$HOME/.ssh/known_hosts_github"   # pinned (api.github.com/meta)
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/site_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/known_hosts_github"
           OUT="$GITHUB_WORKSPACE/$PROJECT_DIR/build/WebGL"
           LOADER=$(ls "$OUT"/Build/*.loader.js | head -n1)
           NAME=$(basename "$LOADER" .loader.js)
           VERSION="$(date -u +%Y%m%d%H%M)-${GITHUB_SHA::7}"
           git clone --depth 1 --branch gh-pages --filter=blob:none --sparse \
-            "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" site
+            "git@github.com:similarize/SimilarizeWebsite.git" site
           cd site
           git sparse-checkout set "$GAME_DIR"
           git config user.name "github-actions[bot]"
@@ -156,15 +161,16 @@ jobs:
           git add -A "$GAME_DIR"
           if git diff --cached --quiet; then echo "nothing to publish"; exit 0; fi
           git commit -m "Publish Four Froggies (Unity WebGL) build $VERSION"
-          for i in 1 2 3 4 5; do
+          # never --force: on a lost race (Hark or another build pushed first) rebase and retry
+          for i in 1 2 3 4 5 6; do
             if git push origin HEAD:gh-pages; then echo "published" | tee -a "$LOG_DIR/status.txt"; exit 0; fi
             sleep $((i*3))
-            git pull --rebase origin gh-pages
+            git pull --rebase origin gh-pages || { git rebase --abort 2>/dev/null; git pull --rebase origin gh-pages; }
           done
           echo "PUBLISH_FAILED" | tee -a "$LOG_DIR/status.txt"
           exit 1
 
-      - name: Commit build log to unity-src
+      - name: Commit build log to main
         if: always()
         env:
           UE: ${{ secrets.UNITY_EMAIL }}
@@ -196,8 +202,8 @@ jobs:
           git add "$L"
           git commit -m "Four Froggies Unity build log for run ${{ github.run_id }} [skip ci]" || exit 0
           for i in 1 2 3 4 5; do
-            git push origin HEAD:unity-src && exit 0
+            git push origin HEAD:main && exit 0
             sleep $((i*2))
-            git pull --rebase origin unity-src || true
+            git pull --rebase origin main || true
           done
           exit 0

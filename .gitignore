@@ -1,0 +1,3 @@
+# Signing keys never go in this repo (Android signing comes from Actions secrets)
+*.keystore
+*.jks

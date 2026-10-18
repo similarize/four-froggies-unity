@@ -17,7 +17,7 @@ on:
         required: false
         default: 'true'
   push:
-    branches: [unity-src]
+    branches: [main]
     paths:
       - '.github/workflows/unity-four-froggies-windows.yml'
       - 'unity/logs/ff-win-request.txt'
@@ -40,10 +40,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 150
     steps:
-      - name: Checkout unity-src
+      - name: Checkout main
         uses: actions/checkout@v4
         with:
-          ref: unity-src
+          ref: main
           path: src
 
       - name: Prepare log dir
@@ -170,7 +170,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          NOTES="Four Froggies native Windows x64 build ($TAG, unity-src ${GITHUB_SHA::7}). Download the zip, unzip, run FourFroggies.exe. Xbox controller: A to join and play. Built by run ${{ github.run_id }}."
+          NOTES="Four Froggies native Windows x64 build ($TAG, main ${GITHUB_SHA::7}). Download the zip, unzip, run FourFroggies.exe. Xbox controller: A to join and play. Built by run ${{ github.run_id }}."
           if gh release view "$TAG" --repo "${{ github.repository }}" > /dev/null 2>&1; then
             gh release upload "$TAG" "$ZIP" --clobber --repo "${{ github.repository }}"
           else
@@ -222,7 +222,7 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
 
-      - name: Commit build log to unity-src
+      - name: Commit build log to main
         if: always()
         env:
           UE: ${{ secrets.UNITY_EMAIL }}
@@ -250,8 +250,8 @@ jobs:
           git add "$L"
           git commit -m "Four Froggies Windows x64 build log for run ${{ github.run_id }} [skip ci]" || exit 0
           for i in 1 2 3 4 5; do
-            git push origin HEAD:unity-src && exit 0
+            git push origin HEAD:main && exit 0
             sleep $((i*2))
-            git pull --rebase origin unity-src || true
+            git pull --rebase origin main || true
           done
           exit 0
